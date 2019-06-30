@@ -62,6 +62,18 @@ class Dataset:
         train_X["суммарная_масса"] = train_X["номер_завалки"].map(mapping)
         valid_X["суммарная_масса"] = valid_X["номер_завалки"].map(mapping)
 
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(max)
+        # train_X["максимальная_масса"] = train_X["номер_завалки"].map(mapping)
+        # valid_X["максимальная_масса"] = valid_X["номер_завалки"].map(mapping)
+
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(min)
+        # train_X["минимальная_масса"] = train_X["номер_завалки"].map(mapping)
+        # valid_X["минимальная_масса"] = valid_X["номер_завалки"].map(mapping)
+
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.median)
+        # train_X["медианная_масса"] = train_X["номер_завалки"].map(mapping)
+        # valid_X["медианная_масса"] = valid_X["номер_завалки"].map(mapping)
+
         train_X, valid_X = self.mean_target(train_X, train_y, valid_X)
 
         train_X = train_X.drop("номер_завалки", axis=1)

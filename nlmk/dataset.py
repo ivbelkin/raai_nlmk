@@ -58,6 +58,10 @@ class Dataset:
         train_X = train_X.merge(self.valki_df, on="номер_валка", how="left")
         valid_X = valid_X.merge(self.valki_df, on="номер_валка", how="left")
 
+        mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(sum)
+        train_X["суммарная_масса"] = train_X["номер_завалки"].map(mapping)
+        valid_X["суммарная_масса"] = valid_X["номер_завалки"].map(mapping)
+
         train_X, valid_X = self.mean_target(train_X, train_y, valid_X)
 
         train_X = train_X.drop("номер_завалки", axis=1)
@@ -71,6 +75,17 @@ class Dataset:
     def save_submission(self, path, iznos):
         df = pd.DataFrame({"id": self.test_df["id"], "iznos": iznos})
         df.to_csv(path, index=False)
+
+    def save_submission_pair(self, path, iznos):
+        self.save_submission(path.replace(".csv", "_p.csv"), iznos + 1.0)
+        self.save_submission(path.replace(".csv", "_n.csv"), iznos - 1.0)
+
+    @staticmethod
+    def calc_score(p, n):
+        e = np.sqrt((p ** 2 + n ** 2) / 2 - 1)
+        np_err = 5e-6
+        e_err = np_err * np.sqrt(p ** 2 + n ** 2) / (2 * e)
+        return e - e_err, e + e_err
 
     def one_hot_categorical(self, df):
         return pd.get_dummies(df, columns=self.categorical)

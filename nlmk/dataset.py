@@ -21,7 +21,7 @@ class Dataset:
         self.cat_to_int = {
             "положение_в_клети": {"низ": 0, "верх": 1}
         }
-        self.categorical = ["номер_клетки", "номер_валка"]
+        self.categorical = ["номер_клетки", "номер_валка", "положение_в_клети"]
 
     def get_train_valid_data(self):
         train_df = self.zavalki_df.query("дата_завалки < '{}'".format(self.train_valid_split))
@@ -37,7 +37,6 @@ class Dataset:
         valid_df["положение_в_клети"] = valid_df["положение_в_клети"].map(self.cat_to_int["положение_в_клети"])
 
         train_X = train_df.drop(["дата_завалки", "дата_вывалки", "износ"], axis=1)
-        train_X = self.one_hot_categorical(train_X)
         train_y = train_df["износ"]
 
         if "износ" in valid_df.columns:
@@ -50,7 +49,7 @@ class Dataset:
         if "id" in valid_df.columns:
             valid_X = valid_X.drop("id", axis=1)
 
-        valid_X = self.one_hot_categorical(valid_X)
+        train_X, valid_X = self.mean_target(train_X, train_y, valid_X)
 
         if valid_y is not None:
             return train_X, train_y, valid_X, valid_y
@@ -63,3 +62,10 @@ class Dataset:
 
     def one_hot_categorical(self, df):
         return pd.get_dummies(df, columns=self.categorical)
+
+    def mean_target(self, train_X, train_y, valid_X):
+        for fname in self.categorical:
+            mapping = train_y.groupby(train_X[fname]).apply(np.mean)
+            train_X[fname] = train_X[fname].map(mapping)
+            valid_X[fname] = valid_X[fname].map(mapping)
+        return train_X, valid_X

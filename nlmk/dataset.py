@@ -58,6 +58,13 @@ class Dataset:
         train_X = train_X.merge(self.valki_df, on="номер_валка", how="left")
         valid_X = valid_X.merge(self.valki_df, on="номер_валка", how="left")
 
+        train_y.index = np.arange(len(train_y))
+        train_X.index = np.arange(len(train_y))
+
+        valid_X.index = np.arange(len(valid_X))
+        if valid_y is not None:
+            valid_y.index = np.arange(len(valid_y))
+
         mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(sum)
         train_X["суммарная_масса"] = train_X["номер_завалки"].map(mapping)
         valid_X["суммарная_масса"] = valid_X["номер_завалки"].map(mapping)
@@ -82,7 +89,7 @@ class Dataset:
         train_X["число_рулонов"] = train_X["номер_завалки"].map(mapping)
         valid_X["число_рулонов"] = valid_X["номер_завалки"].map(mapping)
 
-        train_X, valid_X = self.mean_target(train_X, train_y, valid_X)
+        train_X, train_y, valid_X = self.mean_target(train_X, train_y, valid_X)
 
         train_X = train_X.drop("номер_завалки", axis=1)
         valid_X = valid_X.drop("номер_завалки", axis=1)
@@ -111,18 +118,29 @@ class Dataset:
         return pd.get_dummies(df, columns=self.categorical)
 
     def mean_target(self, train_X, train_y, valid_X):
-        global_mean = np.mean(train_y)
-        N = len(train_y)
         for alpha, fname in zip(self.alphas, self.categorical):
+            print(fname)
+            global_mean = np.mean(train_y)
+            N = len(train_y)
             mapping = train_y.groupby(train_X[fname]).apply(np.mean)
             counts = train_y.groupby(train_X[fname]).apply(len)
-
-            n = train_X[fname].map(counts)
-            train_X[fname] = (train_X[fname].map(mapping) * n + alpha * global_mean * N) / (n + alpha * N)
-
             n = valid_X[fname].map(counts)
-            valid_X[fname] = (valid_X[fname].map(mapping) * n + alpha * global_mean * N) / (n + alpha * N)
-        return train_X, valid_X
+            mean = valid_X[fname].map(mapping)
+            valid_X[fname] = (mean * n + alpha * global_mean * N) / (n + alpha * N)
+
+            global_mean = (np.cumsum(train_y) - train_y) / np.arange(len(train_y))
+            N = np.arange(len(train_y))
+            dummies = pd.get_dummies(train_X[fname])
+            target_oh = (dummies.T * train_y).T
+            mt_matrix = ((target_oh.cumsum() - target_oh) / (dummies.cumsum() - 1)).fillna(global_mean).values
+            n = (dummies.cumsum() - 1).values[dummies.astype(bool).values]
+            mean = mt_matrix[dummies.astype(bool).values]
+            train_X[fname] = (mean * n + alpha * global_mean * N) / (n + alpha * N)
+
+        notna = ~train_X.isna().any(axis=1)
+        train_X = train_X[notna]
+        train_y = train_y[notna]
+        return train_X, train_y, valid_X
 
     def add_zavalka_number(self):
         train_zavalki_dates = sorted(set(self.zavalki_df["дата_завалки"]))
@@ -146,10 +164,10 @@ class Dataset:
     def handle_datetime(self):
         t1 = self.zavalki_df["дата_завалки"].map(pd.to_datetime)
         t2 = self.zavalki_df["дата_вывалки"].map(pd.to_datetime)
-        self.zavalki_df["продолжительность_завалки"] = list(map(lambda x: x.seconds, t2 - t1))
+        self.zavalki_df["продолжительность_завалки"] = list(map(lambda x: x.seconds // 60, t2 - t1))
         self.zavalki_df = self.zavalki_df.drop(["дата_вывалки"], axis=1)
 
         t1 = self.test_df["дата_завалки"].map(pd.to_datetime)
         t2 = self.test_df["дата_вывалки"].map(pd.to_datetime)
-        self.test_df["продолжительность_завалки"] = list(map(lambda x: x.seconds, t2 - t1))
+        self.test_df["продолжительность_завалки"] = list(map(lambda x: x.seconds // 60, t2 - t1))
         self.test_df = self.test_df.drop(["дата_вывалки"], axis=1)

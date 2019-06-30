@@ -21,7 +21,8 @@ class Dataset:
         self.cat_to_int = {
             "положение_в_клети": {"низ": 0, "верх": 1}
         }
-        self.categorical = ["номер_клетки", "номер_валка", "положение_в_клети"]
+        self.categorical = ["номер_клетки", "номер_валка", "положение_в_клети", "материал_валка"]
+        self.alphas = [0, 0, 0, 0]
 
     def get_train_valid_data(self):
         train_df = self.zavalki_df.query("дата_завалки < '{}'".format(self.train_valid_split))
@@ -49,6 +50,9 @@ class Dataset:
         if "id" in valid_df.columns:
             valid_X = valid_X.drop("id", axis=1)
 
+        train_X = train_X.merge(self.valki_df, on="номер_валка", how="left")
+        valid_X = valid_X.merge(self.valki_df, on="номер_валка", how="left")
+
         train_X, valid_X = self.mean_target(train_X, train_y, valid_X)
 
         if valid_y is not None:
@@ -64,8 +68,15 @@ class Dataset:
         return pd.get_dummies(df, columns=self.categorical)
 
     def mean_target(self, train_X, train_y, valid_X):
-        for fname in self.categorical:
+        global_mean = np.mean(train_y)
+        N = len(train_y)
+        for alpha, fname in zip(self.alphas, self.categorical):
             mapping = train_y.groupby(train_X[fname]).apply(np.mean)
-            train_X[fname] = train_X[fname].map(mapping)
-            valid_X[fname] = valid_X[fname].map(mapping)
+            counts = train_y.groupby(train_X[fname]).apply(len)
+
+            n = train_X[fname].map(counts)
+            train_X[fname] = (train_X[fname].map(mapping) * n + alpha * global_mean * N) / (n + alpha * N)
+
+            n = valid_X[fname].map(counts)
+            valid_X[fname] = (valid_X[fname].map(mapping) * n + alpha * global_mean * N) / (n + alpha * N)
         return train_X, valid_X

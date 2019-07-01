@@ -16,32 +16,35 @@ class Dataset:
         self.zavalki_df = pd.read_csv(zavalki_path)
         self.test_df = pd.read_csv(test_path)
 
-        self.train_valid_split = "2018-07-01 00:00:00"
+        self.train_valid_split = "2018-09-01 00:00:00"
         self.train_test_split = "2018-04-01 00:00:00"
 
         self.cat_to_int = {
             "положение_в_клети": {"низ": 0, "верх": 1}
         }
         self.categorical = ["номер_клетки", "номер_валка", "положение_в_клети", "материал_валка"]
+
         self.alphas = [0, 0, 0, 0]
 
-        self.add_zavalka_number()
-        self.handle_datetime()
+        self.calk_on_days = 60
+        self.pred_on_days = 30
+
+        self.train_lags = [0, 30, 60, 90]
+        self.train_step = 10
+
+        self.general_preparations()
 
     def get_train_valid_data(self):
-        train_df = self.zavalki_df.query("дата_завалки < '{}'".format(self.train_valid_split)).drop("дата_завалки", axis=1)
-        valid_df = self.zavalki_df.query("дата_завалки >= '{}'".format(self.train_valid_split)).drop("дата_завалки", axis=1)
+        train_df = self.zavalki_df.query("дата_завалки < '{}'".format(self.train_valid_split))#.drop("дата_завалки", axis=1)
+        valid_df = self.zavalki_df.query("дата_завалки >= '{}'".format(self.train_valid_split))#.drop("дата_завалки", axis=1)
         return self.prepare_X_y(train_df, valid_df)
 
     def get_train_test_data(self):
         train_df = self.zavalki_df.query("дата_завалки >= '{}'".format(self.train_test_split)).drop("дата_завалки", axis=1)
-        test_df = self.test_df.drop("дата_завалки", axis=1)
+        test_df = self.test_df.drop(["id", "дата_завалки"], axis=1)
         return self.prepare_X_y(train_df, test_df)
 
     def prepare_X_y(self, train_df, valid_df):
-        train_df["положение_в_клети"] = train_df["положение_в_клети"].map(self.cat_to_int["положение_в_клети"])
-        valid_df["положение_в_клети"] = valid_df["положение_в_клети"].map(self.cat_to_int["положение_в_клети"])
-
         train_X = train_df.drop(["износ"], axis=1)
         train_y = train_df["износ"]
 
@@ -52,52 +55,90 @@ class Dataset:
             valid_X = valid_df.copy()
             valid_y = None
 
-        if "id" in valid_df.columns:
-            valid_X = valid_X.drop("id", axis=1)
+        train_X = self.basic_features(train_X)
+        valid_X = self.basic_features(valid_X)
 
-        train_X = train_X.merge(self.valki_df, on="номер_валка", how="left")
-        valid_X = valid_X.merge(self.valki_df, on="номер_валка", how="left")
+        train_X_list, train_y_list = [], []
+        total = len([0 for _ in self.train_splits(train_X["день"])])
+        for src, dst, lag in tqdm(self.train_splits(train_X["день"]), total=total):
+            train_src_X, train_src_y = train_X[src].copy(), train_y[src].copy()
+            train_dst_X = train_X[dst].copy()
 
-        train_y.index = np.arange(len(train_y))
-        train_X.index = np.arange(len(train_y))
+            train_dst_X["лаг"] = lag
+            train_dst_X = self.time_features(train_src_X, train_src_y, train_dst_X)
 
-        valid_X.index = np.arange(len(valid_X))
+            train_X_list.append(train_dst_X)
+
+            train_dst_y = train_y.iloc[dst]
+            train_y_list.append(train_dst_y)
+
+        valid_X_list, valid_y_list = [], []
+        total = len([0 for _ in self.train_test_splits(train_X["день"], valid_X["день"])])
+        for src, dst, lag in tqdm(self.train_test_splits(train_X["день"], valid_X["день"]), total=total):
+            train_src_X, train_src_y = train_X[src].copy(), train_y[src].copy()
+            valid_dst_X = valid_X[dst].copy()
+
+            valid_dst_X["лаг"] = lag
+            valid_dst_X = self.time_features(train_src_X, train_src_y, valid_dst_X)
+
+            valid_X_list.append(valid_dst_X)
+
+            if valid_y is not None:
+                valid_dst_y = valid_y.iloc[dst]
+                valid_y_list.append(valid_dst_y)
+
+        train_X = pd.concat(train_X_list, ignore_index=True)
+        train_y = pd.concat(train_y_list, ignore_index=True)
+
+        valid_X = pd.concat(valid_X_list, ignore_index=True)
         if valid_y is not None:
-            valid_y.index = np.arange(len(valid_y))
+            valid_y = pd.concat(valid_y_list, ignore_index=True)
 
-        mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(sum)
-        train_X["суммарная_масса"] = train_X["номер_завалки"].map(mapping)
-        valid_X["суммарная_масса"] = valid_X["номер_завалки"].map(mapping)
+        cols_to_drop = ["номер_завалки", "день"]
+        train_X = train_X.drop(cols_to_drop, axis=1)
+        valid_X = valid_X.drop(cols_to_drop, axis=1)
 
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(max)
-        # train_X["максимальная_масса"] = train_X["номер_завалки"].map(mapping)
-        # valid_X["максимальная_масса"] = valid_X["номер_завалки"].map(mapping)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(min)
-        # train_X["минимальная_масса"] = train_X["номер_завалки"].map(mapping)
-        # valid_X["минимальная_масса"] = valid_X["номер_завалки"].map(mapping)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.median)
-        # train_X["медианная_масса"] = train_X["номер_завалки"].map(mapping)
-        # valid_X["медианная_масса"] = valid_X["номер_завалки"].map(mapping)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.mean)
-        # train_X["средняя_масса"] = train_X["номер_завалки"].map(mapping)
-        # valid_X["средняя_масса"] = valid_X["номер_завалки"].map(mapping)
-
-        mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(len)
-        train_X["число_рулонов"] = train_X["номер_завалки"].map(mapping)
-        valid_X["число_рулонов"] = valid_X["номер_завалки"].map(mapping)
-
-        train_X, train_y, valid_X = self.mean_target(train_X, train_y, valid_X)
-
-        train_X = train_X.drop("номер_завалки", axis=1)
-        valid_X = valid_X.drop("номер_завалки", axis=1)
+        train_X, train_y = self.filter_outliers(train_X, train_y)
 
         if valid_y is not None:
             return train_X, train_y, valid_X, valid_y
         else:
             return train_X, train_y, valid_X
+
+    def train_test_splits(self, train_on, test_on):
+        src_end = np.max(train_on) + 1
+        src = (train_on >= src_end - self.calk_on_days).values
+
+        test_min = np.min(test_on)
+        test_max = np.max(test_on)
+        i = 0
+        while test_min + i * self.pred_on_days <= test_max:
+            dst_start = test_min + i * self.pred_on_days
+            dst_end = dst_start + self.pred_on_days
+            dst = (test_on >= dst_start).values & (test_on < dst_end).values
+            lag = dst_start - src_end
+            i += 1
+            if src.any() and dst.any():
+                yield src, dst, lag
+
+    def train_splits(self, train_on):
+        train_max = np.max(train_on)
+        train_min = np.min(train_on)
+
+        i = 0
+        while train_min + i * self.train_step + self.calk_on_days + self.train_lags[0] <= train_max:
+            src_start = train_min + i * self.train_step
+            src_end = src_start + self.calk_on_days
+            src = (train_on >= src_start).values & (train_on < src_end).values
+            i += 1
+
+            for lag in self.train_lags:
+                dst_start = src_end + lag
+                dst_end = dst_start + self.pred_on_days
+                dst = (train_on >= dst_start).values & (train_on < dst_end).values
+
+                if src.any() and dst.any():
+                    yield src, dst, lag
 
     def save_submission(self, path, iznos):
         df = pd.DataFrame({"id": self.test_df["id"], "iznos": iznos})
@@ -117,30 +158,20 @@ class Dataset:
     def one_hot_categorical(self, df):
         return pd.get_dummies(df, columns=self.categorical)
 
-    def mean_target(self, train_X, train_y, valid_X):
+    def mean_target(self, src_X, src_y, dst_X):
         for alpha, fname in zip(self.alphas, self.categorical):
-            print(fname)
-            global_mean = np.mean(train_y)
-            N = len(train_y)
-            mapping = train_y.groupby(train_X[fname]).apply(np.mean)
-            counts = train_y.groupby(train_X[fname]).apply(len)
-            n = valid_X[fname].map(counts)
-            mean = valid_X[fname].map(mapping)
-            valid_X[fname] = (mean * n + alpha * global_mean * N) / (n + alpha * N)
+            N = len(src_y)
+            global_mean = np.mean(src_y)
 
-            global_mean = (np.cumsum(train_y) - train_y) / np.arange(len(train_y))
-            N = np.arange(len(train_y))
-            dummies = pd.get_dummies(train_X[fname])
-            target_oh = (dummies.T * train_y).T
-            mt_matrix = ((target_oh.cumsum() - target_oh) / (dummies.cumsum() - 1)).fillna(global_mean).values
-            n = (dummies.cumsum() - 1).values[dummies.astype(bool).values]
-            mean = mt_matrix[dummies.astype(bool).values]
-            train_X[fname] = (mean * n + alpha * global_mean * N) / (n + alpha * N)
+            mapping = src_y.groupby(src_X[fname]).apply(np.mean)
+            counts = src_y.groupby(src_X[fname]).apply(len)
 
-        notna = ~train_X.isna().any(axis=1)
-        train_X = train_X[notna]
-        train_y = train_y[notna]
-        return train_X, train_y, valid_X
+            n = dst_X[fname].map(counts)
+            mean = dst_X[fname].map(mapping)
+
+            dst_X[fname] = (mean * n + alpha * global_mean * N) / (n + alpha * N)
+
+        return dst_X
 
     def add_zavalka_number(self):
         train_zavalki_dates = sorted(set(self.zavalki_df["дата_завалки"]))
@@ -164,10 +195,59 @@ class Dataset:
     def handle_datetime(self):
         t1 = self.zavalki_df["дата_завалки"].map(pd.to_datetime)
         t2 = self.zavalki_df["дата_вывалки"].map(pd.to_datetime)
-        self.zavalki_df["продолжительность_завалки"] = list(map(lambda x: x.seconds // 60, t2 - t1))
+        self.zavalki_df["продолжительность_завалки_мин"] = (t2 - t1).map(lambda x: x.seconds // 60)
+        self.zavalki_df["день"] = t1.map(lambda x: x.dayofyear)
+        self.zavalki_df["день_недели"] = t1.map(lambda x: x.dayofweek)
+        self.zavalki_df["час"] = t1.map(lambda x: x.hour)
         self.zavalki_df = self.zavalki_df.drop(["дата_вывалки"], axis=1)
 
         t1 = self.test_df["дата_завалки"].map(pd.to_datetime)
         t2 = self.test_df["дата_вывалки"].map(pd.to_datetime)
-        self.test_df["продолжительность_завалки"] = list(map(lambda x: x.seconds // 60, t2 - t1))
+        self.test_df["продолжительность_завалки_мин"] = (t2 - t1).map(lambda x: x.seconds // 60)
+        self.test_df["день"] = t1.map(lambda x: x.dayofyear)
+        self.test_df["день_недели"] = t1.map(lambda x: x.dayofweek)
+        self.test_df["час"] = t1.map(lambda x: x.hour)
         self.test_df = self.test_df.drop(["дата_вывалки"], axis=1)
+
+    def general_preparations(self):
+        self.add_zavalka_number()
+        self.handle_datetime()
+
+        self.zavalki_df["положение_в_клети"] = self.zavalki_df["положение_в_клети"].map(self.cat_to_int["положение_в_клети"])
+        self.test_df["положение_в_клети"] = self.test_df["положение_в_клети"].map(self.cat_to_int["положение_в_клети"])
+
+        self.zavalki_df = self.zavalki_df.merge(self.valki_df, on="номер_валка", how="left")
+        self.test_df = self.test_df.merge(self.valki_df, on="номер_валка", how="left")
+
+    def time_features(self, src_X, src_y, dst_X):
+        dst_X = self.mean_target(src_X, src_y, dst_X)
+        return dst_X
+
+    def basic_features(self, X):
+        mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(sum)
+        X["суммарная_масса"] = X["номер_завалки"].map(mapping)
+
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(max)
+        # X["максимальная_масса"] = X["номер_завалки"].map(mapping)
+
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(min)
+        # X["минимальная_масса"] = X["номер_завалки"].map(mapping)
+
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.median)
+        # X["медианная_масса"] = X["номер_завалки"].map(mapping)
+
+        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.mean)
+        # X["средняя_масса"] = X["номер_завалки"].map(mapping)
+
+        mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(len)
+        X["число_рулонов"] = X["номер_завалки"].map(mapping)
+
+        return X
+
+    def filter_outliers(self, X, y):
+        m = y.mean()
+        std = y.std()
+
+        mask = (y > m - 3 * std).values & (y < m + 3 * std).values
+
+        return X[mask], y[mask]

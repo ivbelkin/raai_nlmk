@@ -16,7 +16,7 @@ class Dataset:
         self.zavalki_df = pd.read_csv(zavalki_path)
         self.test_df = pd.read_csv(test_path)
 
-        self.train_valid_split = "2018-09-01 00:00:00"
+        self.train_valid_split = "2018-07-01 00:00:00"
         self.train_test_split = "2018-04-01 00:00:00"
 
         self.cat_to_int = {
@@ -35,8 +35,8 @@ class Dataset:
         self.general_preparations()
 
     def get_train_valid_data(self):
-        train_df = self.zavalki_df.query("дата_завалки < '{}'".format(self.train_valid_split))#.drop("дата_завалки", axis=1)
-        valid_df = self.zavalki_df.query("дата_завалки >= '{}'".format(self.train_valid_split))#.drop("дата_завалки", axis=1)
+        train_df = self.zavalki_df.query("дата_завалки < '{}'".format(self.train_valid_split)).drop("дата_завалки", axis=1)
+        valid_df = self.zavalki_df.query("дата_завалки >= '{}'".format(self.train_valid_split)).drop("дата_завалки", axis=1)
         return self.prepare_X_y(train_df, valid_df)
 
     def get_train_test_data(self):
@@ -170,6 +170,7 @@ class Dataset:
             mean = dst_X[fname].map(mapping)
 
             dst_X[fname] = (mean * n + alpha * global_mean * N) / (n + alpha * N)
+            dst_X[fname] = dst_X[fname].map(lambda x: np.round(x, decimals=2))
 
         return dst_X
 
@@ -225,7 +226,7 @@ class Dataset:
 
     def basic_features(self, X):
         mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(sum)
-        X["суммарная_масса"] = X["номер_завалки"].map(mapping)
+        X["суммарная_масса"] = X["номер_завалки"].map(mapping).map(lambda x: int(x) // 100)
 
         # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(max)
         # X["максимальная_масса"] = X["номер_завалки"].map(mapping)

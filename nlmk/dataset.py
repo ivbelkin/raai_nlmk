@@ -26,10 +26,10 @@ class Dataset:
 
         self.alphas = [0, 0, 0, 0]
 
-        self.calk_on_days = 60
-        self.pred_on_days = 30
+        self.calk_on_days = 90
+        self.pred_on_days = 10
 
-        self.train_lags = [0, 30, 60, 90]
+        self.train_lags = list(range(0, 91, 10))
         self.train_step = 10
 
         self.general_preparations()
@@ -58,41 +58,41 @@ class Dataset:
         train_X = self.basic_features(train_X)
         valid_X = self.basic_features(valid_X)
 
-        train_X_list, train_y_list = [], []
-        total = len([0 for _ in self.train_splits(train_X["день"])])
-        for src, dst, lag in tqdm(self.train_splits(train_X["день"]), total=total):
-            train_src_X, train_src_y = train_X[src].copy(), train_y[src].copy()
-            train_dst_X = train_X[dst].copy()
-
-            train_dst_X["лаг"] = lag
-            train_dst_X = self.time_features(train_src_X, train_src_y, train_dst_X)
-
-            train_X_list.append(train_dst_X)
-
-            train_dst_y = train_y.iloc[dst]
-            train_y_list.append(train_dst_y)
-
-        valid_X_list, valid_y_list = [], []
-        total = len([0 for _ in self.train_test_splits(train_X["день"], valid_X["день"])])
-        for src, dst, lag in tqdm(self.train_test_splits(train_X["день"], valid_X["день"]), total=total):
-            train_src_X, train_src_y = train_X[src].copy(), train_y[src].copy()
-            valid_dst_X = valid_X[dst].copy()
-
-            valid_dst_X["лаг"] = lag
-            valid_dst_X = self.time_features(train_src_X, train_src_y, valid_dst_X)
-
-            valid_X_list.append(valid_dst_X)
-
-            if valid_y is not None:
-                valid_dst_y = valid_y.iloc[dst]
-                valid_y_list.append(valid_dst_y)
-
-        train_X = pd.concat(train_X_list, ignore_index=True)
-        train_y = pd.concat(train_y_list, ignore_index=True)
-
-        valid_X = pd.concat(valid_X_list, ignore_index=True)
-        if valid_y is not None:
-            valid_y = pd.concat(valid_y_list, ignore_index=True)
+        # train_X_list, train_y_list = [], []
+        # total = len([0 for _ in self.train_splits(train_X["день"])])
+        # for src, dst, lag in tqdm(self.train_splits(train_X["день"]), total=total):
+        #     train_src_X, train_src_y = train_X[src].copy(), train_y[src].copy()
+        #     train_dst_X = train_X[dst].copy()
+        #
+        #     train_dst_X["лаг"] = lag
+        #     train_dst_X = self.time_features(train_src_X, train_src_y, train_dst_X)
+        #
+        #     train_X_list.append(train_dst_X)
+        #
+        #     train_dst_y = train_y.iloc[dst]
+        #     train_y_list.append(train_dst_y)
+        #
+        # valid_X_list, valid_y_list = [], []
+        # total = len([0 for _ in self.train_test_splits(train_X["день"], valid_X["день"])])
+        # for src, dst, lag in tqdm(self.train_test_splits(train_X["день"], valid_X["день"]), total=total):
+        #     train_src_X, train_src_y = train_X[src].copy(), train_y[src].copy()
+        #     valid_dst_X = valid_X[dst].copy()
+        #
+        #     valid_dst_X["лаг"] = lag
+        #     valid_dst_X = self.time_features(train_src_X, train_src_y, valid_dst_X)
+        #
+        #     valid_X_list.append(valid_dst_X)
+        #
+        #     if valid_y is not None:
+        #         valid_dst_y = valid_y.iloc[dst]
+        #         valid_y_list.append(valid_dst_y)
+        #
+        # train_X = pd.concat(train_X_list, ignore_index=True)
+        # train_y = pd.concat(train_y_list, ignore_index=True)
+        #
+        # valid_X = pd.concat(valid_X_list, ignore_index=True)
+        # if valid_y is not None:
+        #     valid_y = pd.concat(valid_y_list, ignore_index=True)
 
         cols_to_drop = ["номер_завалки", "день"]
         train_X = train_X.drop(cols_to_drop, axis=1)
@@ -155,8 +155,8 @@ class Dataset:
         e_err = np_err * np.sqrt(p ** 2 + n ** 2) / (2 * e)
         return e - e_err, e + e_err
 
-    def one_hot_categorical(self, df):
-        return pd.get_dummies(df, columns=self.categorical)
+    def one_hot_categorical(self, train_X, valid_X):
+        return pd.get_dummies(train_X, columns=self.categorical), pd.get_dummies(valid_X, columns=self.categorical)
 
     def mean_target(self, src_X, src_y, dst_X):
         for alpha, fname in zip(self.alphas, self.categorical):
@@ -220,25 +220,23 @@ class Dataset:
         self.zavalki_df = self.zavalki_df.merge(self.valki_df, on="номер_валка", how="left")
         self.test_df = self.test_df.merge(self.valki_df, on="номер_валка", how="left")
 
+        self.zavalki_df["материал_валка"] = self.zavalki_df["материал_валка"].map(lambda x: int(x.split(" ")[-1]))
+        self.test_df["материал_валка"] = self.test_df["материал_валка"].map(lambda x: int(x.split(" ")[-1]))
+
+        self.ruloni_df["Марка"] = self.ruloni_df["Марка"].map(lambda x: int(x.split(" ")[-1]))
+
     def time_features(self, src_X, src_y, dst_X):
-        dst_X = self.mean_target(src_X, src_y, dst_X)
+        # dst_X = self.mean_target(src_X, src_y, dst_X)
         return dst_X
 
     def basic_features(self, X):
-        mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(sum)
-        X["суммарная_масса"] = X["номер_завалки"].map(mapping).map(lambda x: int(x) // 100)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(max)
-        # X["максимальная_масса"] = X["номер_завалки"].map(mapping)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(min)
-        # X["минимальная_масса"] = X["номер_завалки"].map(mapping)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.median)
-        # X["медианная_масса"] = X["номер_завалки"].map(mapping)
-
-        # mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(np.mean)
-        # X["средняя_масса"] = X["номер_завалки"].map(mapping)
+        agg_fs = {
+            "сум": np.sum, "мин": np.min, "макс": np.max, "мед": np.median, "ср": np.mean
+        }
+        for fname in ["Масса", "Толщина", "Ширина"]:
+            for prefix, f in agg_fs.items():
+                mapping = self.ruloni_df.groupby("номер_завалки")[fname].apply(f)
+                X[prefix + "_" + fname] = X["номер_завалки"].map(mapping)
 
         mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(len)
         X["число_рулонов"] = X["номер_завалки"].map(mapping)

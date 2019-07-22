@@ -32,6 +32,7 @@ class Dataset:
         self.train_lags = list(range(0, 91, 10))
         self.train_step = 10
 
+        self.marki = None
         self.general_preparations()
 
     def get_train_valid_data(self):
@@ -224,6 +225,7 @@ class Dataset:
         self.test_df["материал_валка"] = self.test_df["материал_валка"].map(lambda x: int(x.split(" ")[-1]))
 
         self.ruloni_df["Марка"] = self.ruloni_df["Марка"].map(lambda x: int(x.split(" ")[-1]))
+        self.marki = list(set(self.ruloni_df["Марка"]))
 
     def time_features(self, src_X, src_y, dst_X):
         # dst_X = self.mean_target(src_X, src_y, dst_X)
@@ -238,15 +240,21 @@ class Dataset:
                 mapping = self.ruloni_df.groupby("номер_завалки")[fname].apply(f)
                 X[prefix + "_" + fname] = X["номер_завалки"].map(mapping)
 
+                mapping = self.ruloni_df.groupby(["номер_завалки", "Марка"])[fname].apply(f).to_dict()
+                for marka in self.marki:
+                    X[prefix + "_" + fname + "_марки_" + str(marka)] = X["номер_завалки"].map(
+                        lambda x: mapping.get((x, marka), 0)
+                    )
+
         mapping = self.ruloni_df.groupby("номер_завалки")["Масса"].apply(len)
         X["число_рулонов"] = X["номер_завалки"].map(mapping)
 
         return X
 
     def filter_outliers(self, X, y):
-        m = y.mean()
-        std = y.std()
+        q1 = np.percentile(y, 1)
+        q99 = np.percentile(y, 99)
 
-        mask = (y > m - 3 * std).values & (y < m + 3 * std).values
+        mask = (q1 < y).values & (y < q99).values
 
         return X[mask], y[mask]
